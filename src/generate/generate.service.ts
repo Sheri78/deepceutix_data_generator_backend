@@ -11,25 +11,6 @@ const execAsync = promisify(exec);
 
 @Injectable()
 export class GenerateService {
-  async create(dto: CreateGenerateDto): Promise<GenerateResponseDto> {
-    const { prompt, model } = dto;
-
-    let rawText: string;
-
-    if (model === 'Gemini') {
-      rawText = await this.callGemini(prompt);
-    } else if (model === 'Claude') {
-      rawText = await this.callClaude(prompt);
-    } else if (model === 'DeepSeek') {
-      rawText = await this.callDeepSeek(prompt);
-    } else {
-      throw new Error('Unsupported model');
-    }
-
-    // Parse into structured response
-    return this.smartParse(rawText, model);
-  }
-
   // ----------------- GEMINI -----------------
   async callGemini(prompt: string): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -64,25 +45,103 @@ export class GenerateService {
     return response.data.content[0].text;
   }
 
-  // ----------------- DEEPSEEK (via OpenAI-style fallback) -----------------
+  // ----------------- DEEPSEEK ----------------- DeepSeek R1 Qwen3-8B (free)
   async callDeepSeek(prompt: string): Promise<string> {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.DEEPSEEK_R1_API_KEY;
+    const siteUrl = process.env.OPENROUTER_SITE_URL || ''; 
+    const siteTitle = process.env.OPENROUTER_SITE_TITLE || ''; 
+
     const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
+      'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'gpt-3.5-turbo',
+        model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 600,
+        extra_body: {},
       },
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
+          ...(siteUrl && { 'HTTP-Referer': siteUrl }),
+          ...(siteTitle && { 'X-Title': siteTitle }),
         },
       },
     );
 
     return response.data.choices[0].message.content;
+  }
+
+  // ----------------- LLAMA (via OpenRouter) -----------------
+  async callLlama(prompt: string): Promise<string> {
+    const apiKey = process.env.Llama_API_KEY;
+    const siteUrl = process.env.OPENROUTER_SITE_URL || ''; 
+    const siteTitle = process.env.OPENROUTER_SITE_TITLE || ''; 
+
+    const response = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        messages: [{ role: 'user', content: prompt }],
+        extra_body: {},
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...(siteUrl && { 'HTTP-Referer': siteUrl }),
+          ...(siteTitle && { 'X-Title': siteTitle }),
+        },
+      },
+    );
+
+    return response.data.choices[0].message.content;
+  }
+
+  // ----------------- QWEN3 CODER (via OpenRouter) -----------------
+  async callQwen3Coder(prompt: string): Promise<string> {
+    const apiKey = process.env.QWEN3_CODER_API_KEY;
+    const siteUrl = process.env.OPENROUTER_SITE_URL || ''; 
+    const siteTitle = process.env.OPENROUTER_SITE_TITLE || ''; 
+
+    const response = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'qwen/qwen3-coder:free',
+        messages: [{ role: 'user', content: prompt }],
+        extra_body: {},
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...(siteUrl && { 'HTTP-Referer': siteUrl }),
+          ...(siteTitle && { 'X-Title': siteTitle }),
+        },
+      },
+    );
+
+    return response.data.choices[0].message.content;
+  }
+
+  async create(dto: CreateGenerateDto): Promise<GenerateResponseDto> {
+    const { prompt, model } = dto;
+
+    let rawText: string;
+    const modelKey = model?.toLowerCase();
+
+    if (modelKey === 'gemini') {
+      rawText = await this.callGemini(prompt);
+    } else if (modelKey === 'llama') {
+      rawText = await this.callLlama(prompt);
+    } else if (modelKey === 'deepseek') {
+      rawText = await this.callDeepSeek(prompt);
+    } else if (modelKey === 'qwen3-coder') {
+      rawText = await this.callQwen3Coder(prompt);
+    } else {
+      throw new Error('Unsupported model');
+    }
+
+    return this.smartParse(rawText, model);
   }
 
   // ----------------- SMART PARSER -----------------
@@ -110,7 +169,6 @@ export class GenerateService {
                 y: parsed.y.map(Number),
                 label: parsed.label || label,
               };
-              // Remove this JSON block from clean text
               cleanText = cleanText.replace(match, '');
             }
           } catch (e) {
@@ -132,20 +190,17 @@ export class GenerateService {
                   y: parsed.y.map(Number),
                   label: parsed.label || label,
                 };
-                // Remove this JSON from clean text
                 cleanText = cleanText.replace(match, '');
               }
             } catch {
-              // ignore if not valid JSON
             }
           });
         }
       }
     } catch (e) {
-      console.warn('⚠️ Chart JSON parse failed, skipping.', e);
+      console.warn('Chart JSON parse failed, skipping.', e);
     }
 
-    // 2. Try to extract tables (markdown-style)
     const tableRegex = /\|(.+\|)+\s*\n\s*\|[-:\s|]+\|\s*\n((?:\|.+\|\s*\n?)*)/g;
     let match;
     while ((match = tableRegex.exec(text)) !== null) {
@@ -156,15 +211,14 @@ export class GenerateService {
         if (lines.length >= 3) {
           const headers = lines[0].split('|').map((h) => h.trim()).filter(Boolean);
           const rows = lines
-            .slice(2) // Skip header and separator
-            .filter(line => line.trim()) // Remove empty lines
+            .slice(2) 
+            .filter(line => line.trim()) 
             .map((line) =>
               line.split('|').map((c) => c.trim()).filter(Boolean),
             );
           
           if (headers.length && rows.length) {
-            (result.tables ??= []).push({ headers, rows }); // Ensure tables is always an array
-            // Remove this table from clean text
+            (result.tables ??= []).push({ headers, rows }); 
             cleanText = cleanText.replace(tableText, '');
           }
         }
@@ -176,22 +230,19 @@ export class GenerateService {
     // 3. Extract code blocks
     const codeMatches = text.match(/```(?:python|py)?\s*([\s\S]*?)\s*```/g);
     if (codeMatches) {
-      // Take the first Python code block
       const codeMatch = codeMatches.find(match => 
         match.includes('matplotlib') || 
         match.includes('plt.') || 
         match.includes('import') ||
-        !match.includes('{') // Avoid JSON blocks
+        !match.includes('{') 
       );
       
       if (codeMatch) {
         const code = codeMatch.replace(/```(?:python|py)?\s*/, '').replace(/\s*```/, '').trim();
         result.code = code;
         
-        // Remove code blocks from clean text
         cleanText = cleanText.replace(codeMatch, '');
 
-        // Try to extract x and y arrays from code if no chart found yet
         if (!result.chart) {
           const xMatch = code.match(/x\s*=\s*```math\s*([^`]+)```/);
           const yMatch = code.match(/y\s*=\s*```math\s*([^`]+)```/);
@@ -213,14 +264,14 @@ export class GenerateService {
 
     // 4. Clean explanation (remove extracted content)
     result.explanation = cleanText
-      .replace(/```[\s\S]*?```/g, '') // Remove any remaining code blocks
-      .replace(/\|(.+\|)+\s*\n\s*\|[-:\s|]+\|\s*\n((?:\|.+\|\s*\n?)*)/g, '') // Remove any remaining tables
-      .replace(/\{[\s\S]*?\}/g, '') // Remove any remaining JSON
-      .replace(/^\s*[\r\n]/gm, '') // Remove empty lines
-      .replace(/\n{3,}/g, '\n\n') // Replace multiple newlines with double newlines
+      .replace(/```[\s\S]*?```/g, '') 
+      .replace(/\|(.+\|)+\s*\n\s*\|[-:\s|]+\|\s*\n((?:\|.+\|\s*\n?)*)/g, '') 
+      .replace(/\{[\s\S]*?\}/g, '') 
+      .replace(/^\s*[\r\n]/gm, '')
+      .replace(/\n{3,}/g, '\n\n') 
       .trim();
 
-    // If explanation is too short or empty, use original text
+    
     if (!result.explanation || result.explanation.length < 50) {
       result.explanation = text;
     }
@@ -236,28 +287,54 @@ export class GenerateService {
     data?: any;
   }> {
     try {
-      // Create a temporary directory for this execution
       const tempDir = path.join(__dirname, '../../temp', Date.now().toString());
       await fs.promises.mkdir(tempDir, { recursive: true });
       
-      // Modify the code to save plots and capture data
-      const modifiedCode = this.modifyCodeForExecution(code, tempDir);
+      const cleanedCode = this.cleanCodeForWindows(code);
       
-      // Write the code to a temporary file
+      const modifiedCode = this.modifyCodeForExecution(cleanedCode, tempDir);
+      
       const scriptPath = path.join(tempDir, 'script.py');
-      await fs.promises.writeFile(scriptPath, modifiedCode);
+      await fs.promises.writeFile(scriptPath, modifiedCode, 'utf8');
       
-      // Execute the Python script
-      const { stdout, stderr } = await execAsync(`python ${scriptPath}`, {
-        timeout: 30000, // 30 second timeout
-        cwd: tempDir
-      });
+      const pythonCommands = ['python', 'python3', 'py'];
+      let result: { stdout: string; stderr: string } | undefined;
+      let lastError = '';
       
-      // Check for generated plot
+      for (const cmd of pythonCommands) {
+        try {
+          console.log(`Trying Python command: ${cmd}`);
+          
+          const env = {
+            ...process.env,
+            PYTHONIOENCODING: 'utf-8',
+            PYTHONLEGACYWINDOWSSTDIO: '1'
+          };
+          
+          result = await execAsync(`${cmd} "${scriptPath}"`, {
+            timeout: 30000,
+            cwd: tempDir,
+            env: env,
+            encoding: 'utf8'
+          });
+          console.log(`Success with command: ${cmd}`);
+          break;
+        } catch (error: any) {
+          lastError = error.message;
+          console.log(`Failed with ${cmd}: ${error.message}`);
+          continue;
+        }
+      }
+      
+      if (!result) {
+        throw new Error(`All Python commands failed. Last error: ${lastError}`);
+      }
+      
+      const { stdout, stderr } = result;
+      
       const plotPath = path.join(tempDir, 'plot.png');
       const plotExists = await fs.promises.access(plotPath).then(() => true).catch(() => false);
       
-      // Check for generated data
       const dataPath = path.join(tempDir, 'data.json');
       let extractedData = null;
       try {
@@ -278,17 +355,58 @@ export class GenerateService {
       };
       
     } catch (error: any) {
+      console.error('Python execution error:', error);
       return {
         success: false,
-        error: error.message
+        error: `Python execution failed: ${error.message}`
       };
     }
+  }
+
+  //i have added  this new method to clean Unicode characters
+  private cleanCodeForWindows(code: string): string {
+    return code
+      .replace(/⁻¹/g, '^-1')           
+      .replace(/⁻/g, '-')              
+      .replace(/¹/g, '1')              
+      .replace(/²/g, '2')              
+      .replace(/³/g, '3')              
+      .replace(/°/g, ' degrees')       
+      .replace(/μ/g, 'micro')         
+      .replace(/α/g, 'alpha')  
+      .replace(/β/g, 'beta')  
+      .replace(/γ/g, 'gamma')  
+      .replace(/δ/g, 'delta')  
+      .replace(/λ/g, 'lambda')        
+      .replace(/π/g, 'pi')             
+      .replace(/σ/g, 'sigma')         
+      .replace(/Δ/g, 'Delta')         
+      .replace(/Ω/g, 'Omega')         
+      .replace(/±/g, '+/-')            
+      .replace(/×/g, 'x')              
+      .replace(/÷/g, '/')            
+      .replace(/≤/g, '<=')             
+      .replace(/≥/g, '>=')            
+      .replace(/≠/g, '!=')       
+      .replace(/≈/g, '~=')             
+      .replace(/∞/g, 'infinity')
   }
 
   private modifyCodeForExecution(originalCode: string, tempDir: string): string {
     let modifiedCode = originalCode;
     
-    // Add necessary imports if not present
+    // Add encoding declaration at the top
+    modifiedCode = `# -*- coding: utf-8 -*-
+import sys
+import os
+# Set UTF-8 encoding for output
+if sys.platform.startswith('win'):
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+
+` + modifiedCode;
+    
     if (!modifiedCode.includes('import matplotlib.pyplot as plt')) {
       modifiedCode = 'import matplotlib.pyplot as plt\n' + modifiedCode;
     }
@@ -296,13 +414,21 @@ export class GenerateService {
       modifiedCode = 'import numpy as np\n' + modifiedCode;
     }
     
-    // Replace plt.show() with plt.savefig()
     modifiedCode = modifiedCode.replace(
-      /plt\.show\(\)/g, 
-      `plt.savefig('${path.join(tempDir, 'plot.png').replace(/\\/g, '/')}', dpi=150, bbox_inches='tight')`
+      'import matplotlib.pyplot as plt',
+      `import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt`
     );
     
-    // Add code to extract data if possible
+    const plotPath = path.join(tempDir, 'plot.png').replace(/\\/g, '/');
+    modifiedCode = modifiedCode.replace(
+      /plt\.show\(\)/g, 
+      `plt.savefig('${plotPath}', dpi=150, bbox_inches='tight')
+plt.close()  # Close the figure to free memory`
+    );
+    
+    const dataPath = path.join(tempDir, 'data.json').replace(/\\/g, '/');
     modifiedCode += `
 
 # Try to extract data for frontend
@@ -324,12 +450,14 @@ try:
         }
     
     if data_to_extract:
-        with open('${path.join(tempDir, 'data.json').replace(/\\/g, '/')}', 'w') as f:
+        with open('${dataPath}', 'w', encoding='utf-8') as f:
             json.dump(data_to_extract, f)
+            
+    print("Script executed successfully!")
 except Exception as e:
-    print(f"Could not extract data: {e}")
+    print(f"Note: Could not extract data - {e}")
 `;
-  
+    
     return modifiedCode;
   }
 }
