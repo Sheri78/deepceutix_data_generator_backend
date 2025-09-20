@@ -8,23 +8,23 @@ import type { Response } from 'express';
 export class GenerateController {
   constructor(private readonly generateService: GenerateService) {}
 
-@Post()
-async create(@Body() dto: CreateGenerateDto) {
-  return this.generateService.create(dto);
-}
-@Post('execute-python')
-async executePython(@Body() dto: { code: string }) {
-  return this.generateService.executePythonCode(dto.code);
-}
+  @Post()
+  async create(@Body() dto: CreateGenerateDto) {
+    return this.generateService.create(dto);
+  }
 
-// generate.controller.ts
-@Get('temp-image/:folder/:filename')
-async getTempImage(
-  @Param('folder') folder: string,
-  @Param('filename') filename: string,
-  @Res() res: Response
-) {
-  const imagePath = path.join(__dirname, '../../temp', folder, filename);
-  return res.sendFile(imagePath);
-}
+  @Post('execute-python')
+  async executePython(@Body() dto: { code: string }) {
+    return this.generateService.executePython(dto.code);
+  }
+
+  @Get('temp-image/:folder/:filename')
+  async getTempImage(
+    @Param('folder') folder: string,
+    @Param('filename') filename: string,
+    @Res() res: Response
+  ) {
+    const imagePath = path.join(__dirname, '../../temp', folder, filename);
+    return res.sendFile(imagePath);
+  }
 }
