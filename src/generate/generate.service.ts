@@ -97,16 +97,53 @@ export class GenerateService {
     return response.data.choices[0].message.content;
   }
 
-  // ----------------- QWEN3 CODER (via OpenRouter) -----------------
-  async callQwen3Coder(prompt: string): Promise<string> {
-    const apiKey = process.env.QWEN3_CODER_API_KEY;
+  // ----------------- QWEN2.5 CODER (via OpenRouter) -----------------
+  async callQwen(prompt: string): Promise<string> {
+    const apiKey = process.env.QWEN2_5_VL_72B_API_KEY;
+    const siteUrl = process.env.OPENROUTER_SITE_URL || '';
+    const siteTitle = process.env.OPENROUTER_SITE_TITLE || '';
+
+    const response = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'qwen/qwen2.5-vl-72b-instruct:free',
+        messages: [{ role: 'user', content: prompt }],
+        extra_body: {},
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...(siteUrl && { 'HTTP-Referer': siteUrl }),
+          ...(siteTitle && { 'X-Title': siteTitle }),
+        },
+      },
+    );
+
+    // Defensive: check for choices and message
+    if (
+      !response.data ||
+      !Array.isArray(response.data.choices) ||
+      !response.data.choices[0]?.message?.content
+    ) {
+      throw new Error(
+        `Qwen3-Coder API error: ${JSON.stringify(response.data)}`
+      );
+    }
+
+    return response.data.choices[0].message.content;
+  }
+
+  // ----------------- GPT-OSS-20B (via OpenRouter) -----------------
+  async callGptOss20b(prompt: string): Promise<string> {
+    const apiKey = process.env.GPT_OSS_20B_API_KEY;
     const siteUrl = process.env.OPENROUTER_SITE_URL || ''; 
     const siteTitle = process.env.OPENROUTER_SITE_TITLE || ''; 
 
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'qwen/qwen3-coder:free',
+        model: 'openai/gpt-oss-20b:free',
         messages: [{ role: 'user', content: prompt }],
         extra_body: {},
       },
@@ -135,8 +172,10 @@ export class GenerateService {
       rawText = await this.callLlama(prompt);
     } else if (modelKey === 'deepseek') {
       rawText = await this.callDeepSeek(prompt);
-    } else if (modelKey === 'qwen3-coder') {
-      rawText = await this.callQwen3Coder(prompt);
+    } else if (modelKey === 'qwen2.5') {
+      rawText = await this.callQwen(prompt);
+    } else if (modelKey === 'gpt-oss-20b') {
+      rawText = await this.callGptOss20b(prompt);
     } else {
       throw new Error('Unsupported model');
     }
